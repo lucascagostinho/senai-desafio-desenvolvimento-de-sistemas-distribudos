@@ -1,0 +1,19 @@
+# Configuração local com senhas
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+dist/
+coverage/
+*.log
+
+# Sistema / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Build incremental do TypeScript
+*.tsbuildinfo

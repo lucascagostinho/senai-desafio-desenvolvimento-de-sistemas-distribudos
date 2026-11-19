@@ -1,0 +1,84 @@
+# Infraestrutura compartilhada pelos dois microsserviços (item 2 do enunciado).
+# Os serviços Node (payment-service e notification-service) rodam fora do compose,
+# cada um no seu processo, para mostrar que são independentes.
+#
+# A sintaxe ${VAR:?mensagem} faz o compose parar com erro se a variável
+# estiver vazia ou faltando no .env, antes de subir qualquer container.
+name: comprefacil
+
+services:
+  # Banco de dados. Um único servidor Postgres com bancos separados por serviço
+  # (payment e notification, mais um banco "shadow" de cada um, usado pelo
+  # Prisma para gerar migrações). Cada serviço tem usuário próprio.
+  postgres:
+    image: postgres:17.12-alpine
+    container_name: comprefacil-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:?defina POSTGRES_ADMIN_USER no .env}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?defina POSTGRES_ADMIN_PASSWORD no .env}
+      PAYMENT_DB_NAME: ${PAYMENT_DB_NAME:?defina PAYMENT_DB_NAME no .env}
+      PAYMENT_DB_USER: ${PAYMENT_DB_USER:?defina PAYMENT_DB_USER no .env}
+      PAYMENT_DB_PASSWORD: ${PAYMENT_DB_PASSWORD:?defina PAYMENT_DB_PASSWORD no .env}
+      NOTIFICATION_DB_NAME: ${NOTIFICATION_DB_NAME:?defina NOTIFICATION_DB_NAME no .env}
+      NOTIFICATION_DB_USER: ${NOTIFICATION_DB_USER:?defina NOTIFICATION_DB_USER no .env}
+      NOTIFICATION_DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD:?defina NOTIFICATION_DB_PASSWORD no .env}
+    ports:
+      - "127.0.0.1:5432:5432" # exposto só na máquina local
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Scripts executados só na PRIMEIRA inicialização (volume vazio)
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Testa por TCP no banco do pagamento: durante o init o Postgres só
+      # escuta no socket local, então isto só passa depois que os bancos existem.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${PAYMENT_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Mensageria. A imagem "management" inclui o painel web (porta 15672).
+  rabbitmq:
+    image: rabbitmq:4.1.8-management
+    container_name: comprefacil-rabbitmq
+    # O RabbitMQ guarda os dados numa pasta com o nome do nó (rabbit@<hostname>).
+    # Hostname fixo = mesmo nó depois de recriar o container, e as filas
+    # duráveis e mensagens persistentes do volume continuam lá.
+    hostname: rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?defina RABBITMQ_USER no .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?defina RABBITMQ_PASSWORD no .env}
+    ports:
+      - "127.0.0.1:5672:5672"   # AMQP (usado pelos serviços)
+      - "127.0.0.1:15672:15672" # painel web
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  # Cliente web do Postgres, para ver as tabelas durante a demonstração.
+  pgadmin:
+    image: dpage/pgadmin4:9.19
+    container_name: comprefacil-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:?defina PGADMIN_EMAIL no .env}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?defina PGADMIN_PASSWORD no .env}
+      # Não pede a "master password" extra do pgAdmin (ambiente local)
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "127.0.0.1:15432:80"
+    volumes:
+      # Servidor "CompreFácil" já cadastrado ao abrir o painel
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  rabbitmq-data:

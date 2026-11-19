@@ -1,0 +1,38 @@
+// Modelo de dados do serviço de notificação (banco "notification", só deste serviço).
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Tipos de notificação pedidos pelo enunciado (passos III e VI)
+enum NotificationType {
+  TRANSACTION_RECEIVED
+  TRANSACTION_CONFIRMED
+}
+
+model Notification {
+  id            String           @id @default(uuid()) @db.Uuid
+  // Id do evento que gerou a notificação. É ÚNICO: se o RabbitMQ entregar a
+  // mesma mensagem duas vezes, o banco recusa a segunda (idempotência).
+  eventId       String           @unique @map("event_id") @db.Uuid
+  type          NotificationType
+  transactionId String           @map("transaction_id") @db.Uuid
+  userId        String           @map("user_id")
+  // Destino da notificação (e-mail simulado)
+  recipient     String
+  message       String
+  createdAt     DateTime         @default(now()) @map("created_at")
+
+  // Uma notificação de cada tipo por transação: mesmo que o Pagamento reenvie
+  // o evento com outro eventId, o usuário não é notificado duas vezes.
+  @@unique([transactionId, type])
+  @@index([userId])
+  @@map("notifications")
+}
